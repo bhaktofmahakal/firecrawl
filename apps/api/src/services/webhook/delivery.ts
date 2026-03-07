@@ -247,7 +247,10 @@ export async function processWebhookInsertJobs() {
   });
 
   try {
-    await supabase_service.from("webhook_logs").insert(parsedJobs);
+    const { error: insertError } = await supabase_service.from("webhook_logs").insert(parsedJobs);
+    if (insertError) {
+      throw insertError;
+    }
     _logger.info("Webhook inserter inserted jobs", {
       jobCount: parsedJobs.length,
     });
@@ -263,11 +266,21 @@ export async function processWebhookInsertJobs() {
       ),
     );
     for (let i = 0; i < results.length; i++) {
-      if (results[i].status === "fulfilled") {
-        inserted++;
+      const result = results[i];
+      if (result.status === "fulfilled") {
+        // Supabase client returns { error } instead of throwing
+        if (result.value?.error) {
+          _logger.error("Webhook inserter failed to insert individual job, skipping", {
+            error: result.value.error,
+            teamId: parsedJobs[i].team_id,
+            crawlId: parsedJobs[i].crawl_id,
+          });
+        } else {
+          inserted++;
+        }
       } else {
         _logger.error("Webhook inserter failed to insert individual job, skipping", {
-          error: (results[i] as PromiseRejectedResult).reason,
+          error: result.reason,
           teamId: parsedJobs[i].team_id,
           crawlId: parsedJobs[i].crawl_id,
         });
