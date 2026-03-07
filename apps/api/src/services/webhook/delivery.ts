@@ -252,9 +252,30 @@ export async function processWebhookInsertJobs() {
       jobCount: parsedJobs.length,
     });
   } catch (error) {
-    _logger.error("Webhook inserter failed to insert jobs", {
+    _logger.warn("Webhook inserter bulk insert failed, falling back to individual inserts", {
       error,
       jobCount: parsedJobs.length,
+    });
+    let inserted = 0;
+    const results = await Promise.allSettled(
+      parsedJobs.map(job =>
+        supabase_service.from("webhook_logs").insert(job),
+      ),
+    );
+    for (let i = 0; i < results.length; i++) {
+      if (results[i].status === "fulfilled") {
+        inserted++;
+      } else {
+        _logger.error("Webhook inserter failed to insert individual job, skipping", {
+          error: (results[i] as PromiseRejectedResult).reason,
+          teamId: parsedJobs[i].team_id,
+          crawlId: parsedJobs[i].crawl_id,
+        });
+      }
+    }
+    _logger.info("Webhook inserter individual insert completed", {
+      inserted,
+      failed: parsedJobs.length - inserted,
     });
   }
 }
