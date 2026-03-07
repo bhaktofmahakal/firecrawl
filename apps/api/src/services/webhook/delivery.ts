@@ -220,7 +220,7 @@ export async function processWebhookInsertJobs() {
     } catch (parseError) {
       _logger.error("Failed to parse webhook insert job, skipping", {
         error: parseError,
-        rawContent: typeof raw === "string" ? raw.slice(0, 500) : raw,
+        rawContentLength: typeof raw === "string" ? raw.length : undefined,
       });
     }
   }

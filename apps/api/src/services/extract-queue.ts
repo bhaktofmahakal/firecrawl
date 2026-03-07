@@ -100,7 +100,8 @@ export async function consumeExtractJobs(
         _logger.error("Failed to parse extract job message", {
           module: "extract-queue",
           error: parseError,
-          rawContent: msg.content.toString().slice(0, 500),
+          contentLength: msg.content.length,
+          messageId: msg.properties?.messageId,
         });
         // Ack to discard the malformed message — it can never be parsed
         ch.ack(msg);
@@ -150,7 +151,8 @@ export async function consumeExtractDLQ(
         _logger.error("Failed to parse DLQ message", {
           module: "extract-dlq",
           error: parseError,
-          rawContent: msg.content.toString().slice(0, 500),
+          contentLength: msg.content.length,
+          messageId: msg.properties?.messageId,
         });
         // Ack to discard the malformed message — it can never be parsed
         ch.ack(msg);

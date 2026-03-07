@@ -231,12 +231,11 @@ export async function getActiveBrowserSessionCount(
   try {
     const cached = await getValue(cacheKey);
     if (cached !== null) {
-      const parsed = parseInt(cached, 10);
-      if (!Number.isNaN(parsed)) {
+      const parsed = Number(cached);
+      if (Number.isInteger(parsed) && parsed >= 0) {
         return parsed;
       }
-      logger.warn("Non-numeric cached browser session count, ignoring cache", {
-        cached,
+      logger.warn("Invalid cached browser session count, ignoring cache", {
         teamId,
       });
     }

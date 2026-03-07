@@ -191,14 +191,17 @@ export async function crawlStatusController(
   const rawSkip =
     typeof req.query.skip === "string" ? parseInt(req.query.skip, 10) : 0;
   const start = Number.isNaN(rawSkip) || rawSkip < 0 ? 0 : rawSkip;
+  const MAX_LIMIT = 10000;
   const rawLimit =
     typeof req.query.limit === "string"
       ? parseInt(req.query.limit, 10)
       : undefined;
-  const end =
+  const normalizedLimit =
     rawLimit !== undefined && !Number.isNaN(rawLimit) && rawLimit > 0
-      ? start + rawLimit - 1
+      ? Math.min(rawLimit, MAX_LIMIT)
       : undefined;
+  const end =
+    normalizedLimit !== undefined ? start + normalizedLimit - 1 : undefined;
 
   const group = await crawlGroup.getGroup(req.params.jobId);
   const groupAnyJob = await scrapeQueue.getGroupAnyJob(
@@ -299,7 +302,7 @@ export async function crawlStatusController(
     next:
       (outputBulkA.total ?? 0) > start + iteratedOver ||
       outputBulkA.status !== "completed"
-        ? `${req.protocol}://${req.get("host")}/v2/${isBatch ? "batch/scrape" : "crawl"}/${req.params.jobId}?skip=${start + iteratedOver}${req.query.limit ? `&limit=${req.query.limit}` : ""}`
+        ? `${req.protocol}://${req.get("host")}/v2/${isBatch ? "batch/scrape" : "crawl"}/${req.params.jobId}?skip=${start + iteratedOver}${normalizedLimit !== undefined ? `&limit=${normalizedLimit}` : ""}`
         : undefined,
   };
 
