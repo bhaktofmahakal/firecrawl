@@ -216,7 +216,24 @@ export async function processWebhookInsertJobs() {
   const parsedJobs: any[] = [];
   for (const raw of jobs) {
     try {
-      parsedJobs.push(JSON.parse(raw));
+      const parsed = JSON.parse(raw);
+      // Shape-validate: must be an object with required fields for webhook_logs
+      if (
+        parsed !== null &&
+        typeof parsed === "object" &&
+        !Array.isArray(parsed) &&
+        typeof parsed.team_id === "string" &&
+        typeof parsed.crawl_id === "string" &&
+        typeof parsed.url === "string"
+      ) {
+        parsedJobs.push(parsed);
+      } else {
+        _logger.error("Webhook insert job failed shape validation, skipping", {
+          hasTeamId: typeof parsed?.team_id === "string",
+          hasCrawlId: typeof parsed?.crawl_id === "string",
+          hasUrl: typeof parsed?.url === "string",
+        });
+      }
     } catch (parseError) {
       _logger.error("Failed to parse webhook insert job, skipping", {
         error: parseError,
