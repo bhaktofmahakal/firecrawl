@@ -44,6 +44,10 @@ export async function crawlCancelController(
   } catch (error) {
     Sentry.captureException(error);
     logger.error(error);
-    return res.status(500).json({ error: error.message });
+    return res
+      .status(500)
+      .json({
+        error: "An unexpected error occurred while cancelling the crawl.",
+      });
   }
 }

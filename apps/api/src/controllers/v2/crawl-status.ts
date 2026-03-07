@@ -188,11 +188,16 @@ export async function crawlStatusController(
     });
   }
 
-  const start =
+  const rawSkip =
     typeof req.query.skip === "string" ? parseInt(req.query.skip, 10) : 0;
-  const end =
+  const start = Number.isNaN(rawSkip) || rawSkip < 0 ? 0 : rawSkip;
+  const rawLimit =
     typeof req.query.limit === "string"
-      ? start + parseInt(req.query.limit, 10) - 1
+      ? parseInt(req.query.limit, 10)
+      : undefined;
+  const end =
+    rawLimit !== undefined && !Number.isNaN(rawLimit) && rawLimit > 0
+      ? start + rawLimit - 1
       : undefined;
 
   const group = await crawlGroup.getGroup(req.params.jobId);

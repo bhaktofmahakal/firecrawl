@@ -231,7 +231,14 @@ export async function getActiveBrowserSessionCount(
   try {
     const cached = await getValue(cacheKey);
     if (cached !== null) {
-      return parseInt(cached, 10);
+      const parsed = parseInt(cached, 10);
+      if (!Number.isNaN(parsed)) {
+        return parsed;
+      }
+      logger.warn("Non-numeric cached browser session count, ignoring cache", {
+        cached,
+        teamId,
+      });
     }
   } catch {
     // Redis down — fall through to DB

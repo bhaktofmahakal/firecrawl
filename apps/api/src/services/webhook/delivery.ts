@@ -213,7 +213,18 @@ export async function processWebhookInsertJobs() {
     )) ?? [];
   if (jobs.length === 0) return;
 
-  const parsedJobs = jobs.map(x => JSON.parse(x));
+  const parsedJobs: any[] = [];
+  for (const raw of jobs) {
+    try {
+      parsedJobs.push(JSON.parse(raw));
+    } catch (parseError) {
+      _logger.error("Failed to parse webhook insert job, skipping", {
+        error: parseError,
+        rawContent: typeof raw === "string" ? raw.slice(0, 500) : raw,
+      });
+    }
+  }
+  if (parsedJobs.length === 0) return;
   _logger.info("Webhook inserter found jobs to insert", {
     jobCount: parsedJobs.length,
   });
