@@ -230,7 +230,7 @@ export async function getActiveBrowserSessionCount(
 
   try {
     const cached = await getValue(cacheKey);
-    if (cached !== null) {
+    if (cached !== null && cached.trim() !== "") {
       const parsed = Number(cached);
       if (Number.isInteger(parsed) && parsed >= 0) {
         return parsed;

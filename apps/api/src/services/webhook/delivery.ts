@@ -260,30 +260,35 @@ export async function processWebhookInsertJobs() {
       jobCount: parsedJobs.length,
     });
     let inserted = 0;
-    const results = await Promise.allSettled(
-      parsedJobs.map(job =>
-        supabase_service.from("webhook_logs").insert(job),
-      ),
-    );
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i];
-      if (result.status === "fulfilled") {
-        // Supabase client returns { error } instead of throwing
-        if (result.value?.error) {
-          _logger.error("Webhook inserter failed to insert individual job, skipping", {
-            error: result.value.error,
-            teamId: parsedJobs[i].team_id,
-            crawlId: parsedJobs[i].crawl_id,
-          });
+    const BATCH_SIZE = 50;
+    for (let batch = 0; batch < parsedJobs.length; batch += BATCH_SIZE) {
+      const chunk = parsedJobs.slice(batch, batch + BATCH_SIZE);
+      const results = await Promise.allSettled(
+        chunk.map(job =>
+          supabase_service.from("webhook_logs").insert(job),
+        ),
+      );
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        const jobIndex = batch + i;
+        if (result.status === "fulfilled") {
+          // Supabase client returns { error } instead of throwing
+          if (result.value?.error) {
+            _logger.error("Webhook inserter failed to insert individual job, skipping", {
+              error: result.value.error,
+              teamId: parsedJobs[jobIndex].team_id,
+              crawlId: parsedJobs[jobIndex].crawl_id,
+            });
+          } else {
+            inserted++;
+          }
         } else {
-          inserted++;
+          _logger.error("Webhook inserter failed to insert individual job, skipping", {
+            error: result.reason,
+            teamId: parsedJobs[jobIndex].team_id,
+            crawlId: parsedJobs[jobIndex].crawl_id,
+          });
         }
-      } else {
-        _logger.error("Webhook inserter failed to insert individual job, skipping", {
-          error: result.reason,
-          teamId: parsedJobs[i].team_id,
-          crawlId: parsedJobs[i].crawl_id,
-        });
       }
     }
     _logger.info("Webhook inserter individual insert completed", {
