@@ -22,6 +22,8 @@ import { getJobPriority } from "../../lib/job-priority";
 import { logRequest } from "../../services/logging/log_job";
 import { getErrorContactMessage } from "../../lib/deployment";
 import { captureExceptionWithZdrCheck } from "../../services/sentry";
+import type { BillingMetadata } from "../../services/billing/types";
+import { getScrapeZDR } from "../../lib/zdr-helpers";
 
 const AGENT_INTEROP_CONCURRENCY_BOOST = 3;
 
@@ -82,7 +84,10 @@ export async function scrapeController(
       }
 
       const zeroDataRetention =
-        req.acuc?.flags?.forceZDR || (req.body.zeroDataRetention ?? false);
+        getScrapeZDR(req.acuc?.flags) === "forced" || (req.body.zeroDataRetention ?? false);
+      const billing: BillingMetadata = req.body.__agentInterop
+        ? { endpoint: "agent" as const, jobId }
+        : { endpoint: "scrape" as const, jobId };
 
       if (
         req.body.__agentInterop &&
@@ -246,6 +251,7 @@ export async function scrapeController(
                     skipNuq: true,
                     origin,
                     integration: req.body.integration,
+                    billing,
                     startTime: controllerStartTime,
                     zeroDataRetention,
                     apiKeyId: req.acuc?.api_key_id ?? null,

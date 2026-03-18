@@ -28,6 +28,7 @@ import { fromV1ScrapeOptions } from "../v2/types";
 import { checkPermissions } from "../../lib/permissions";
 import { crawlGroup } from "../../services/worker/nuq";
 import { logRequest } from "../../services/logging/log_job";
+import { getScrapeZDR } from "../../lib/zdr-helpers";
 
 export async function batchScrapeController(
   req: RequestWithAuth<{}, BatchScrapeResponse, BatchScrapeRequest>,
@@ -49,7 +50,7 @@ export async function batchScrapeController(
   }
 
   const zeroDataRetention =
-    req.acuc?.flags?.forceZDR || req.body.zeroDataRetention;
+    getScrapeZDR(req.acuc?.flags) === "forced" || req.body.zeroDataRetention;
 
   const id = req.body.appendToId ?? uuidv7();
   const logger = _logger.child({
@@ -174,6 +175,7 @@ export async function batchScrapeController(
     });
   }
   logger.debug("Using job priority " + jobPriority, { jobPriority });
+  const billing = { endpoint: "batch_scrape" as const, jobId: id };
 
   const jobs = urls.map(x => ({
     jobId: uuidv7(),
@@ -185,6 +187,7 @@ export async function batchScrapeController(
       scrapeOptions,
       origin: "api",
       integration: req.body.integration,
+      billing,
       crawl_id: id,
       sitemapped: true,
       v1: true,

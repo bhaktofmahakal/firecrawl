@@ -5,7 +5,6 @@ import { documentMaxReasonableTime, scrapeDocument } from "./document";
 import {
   fireEngineMaxReasonableTime,
   scrapeURLWithFireEngineChromeCDP,
-  scrapeURLWithFireEnginePlaywright,
   scrapeURLWithFireEngineTLSClient,
 } from "./fire-engine";
 import { pdfMaxReasonableTime, scrapePDF } from "./pdf";
@@ -15,6 +14,11 @@ import {
   scrapeURLWithPlaywright,
 } from "./playwright";
 import { indexMaxReasonableTime, scrapeURLWithIndex } from "./index/index";
+import {
+  scrapeURLWithWikipedia,
+  wikipediaMaxReasonableTime,
+  isWikimediaUrl,
+} from "./wikipedia";
 import { queryEngpickerVerdict, useIndex } from "../../../services";
 import { hasFormatOfType } from "../../../lib/format-utils";
 import { getPDFMaxPages } from "../../../controllers/v2/types";
@@ -27,8 +31,6 @@ export type Engine =
   | "fire-engine(retry);chrome-cdp"
   | "fire-engine;chrome-cdp;stealth"
   | "fire-engine(retry);chrome-cdp;stealth"
-  | "fire-engine;playwright"
-  | "fire-engine;playwright;stealth"
   | "fire-engine;tlsclient"
   | "fire-engine;tlsclient;stealth"
   | "playwright"
@@ -36,7 +38,8 @@ export type Engine =
   | "pdf"
   | "document"
   | "index"
-  | "index;documents";
+  | "index;documents"
+  | "wikipedia";
 
 const useFireEngine =
   config.FIRE_ENGINE_BETA_URL !== "" &&
@@ -44,8 +47,14 @@ const useFireEngine =
 const usePlaywright =
   config.PLAYWRIGHT_MICROSERVICE_URL !== "" &&
   config.PLAYWRIGHT_MICROSERVICE_URL !== undefined;
+const useWikipedia =
+  config.WIKIPEDIA_ENTERPRISE_USERNAME !== undefined &&
+  config.WIKIPEDIA_ENTERPRISE_USERNAME !== "" &&
+  config.WIKIPEDIA_ENTERPRISE_PASSWORD !== undefined &&
+  config.WIKIPEDIA_ENTERPRISE_PASSWORD !== "";
 
 const engines: Engine[] = [
+  ...(useWikipedia ? ["wikipedia" as const] : []),
   ...(useIndex ? ["index" as const, "index;documents" as const] : []),
   ...(useFireEngine
     ? [
@@ -53,8 +62,6 @@ const engines: Engine[] = [
         "fire-engine;chrome-cdp;stealth" as const,
         "fire-engine(retry);chrome-cdp" as const,
         "fire-engine(retry);chrome-cdp;stealth" as const,
-        // "fire-engine;playwright" as const,
-        // "fire-engine;playwright;stealth" as const,
         "fire-engine;tlsclient" as const,
         "fire-engine;tlsclient;stealth" as const,
       ]
@@ -150,14 +157,13 @@ const engineHandlers: {
   "fire-engine(retry);chrome-cdp": scrapeURLWithFireEngineChromeCDP,
   "fire-engine;chrome-cdp;stealth": scrapeURLWithFireEngineChromeCDP,
   "fire-engine(retry);chrome-cdp;stealth": scrapeURLWithFireEngineChromeCDP,
-  "fire-engine;playwright": scrapeURLWithFireEnginePlaywright,
-  "fire-engine;playwright;stealth": scrapeURLWithFireEnginePlaywright,
   "fire-engine;tlsclient": scrapeURLWithFireEngineTLSClient,
   "fire-engine;tlsclient;stealth": scrapeURLWithFireEngineTLSClient,
   playwright: scrapeURLWithPlaywright,
   fetch: scrapeURLWithFetch,
   pdf: scrapePDF,
   document: scrapeDocument,
+  wikipedia: scrapeURLWithWikipedia,
 };
 
 const engineMRTs: {
@@ -173,10 +179,6 @@ const engineMRTs: {
     fireEngineMaxReasonableTime(meta, "chrome-cdp"),
   "fire-engine(retry);chrome-cdp;stealth": meta =>
     fireEngineMaxReasonableTime(meta, "chrome-cdp"),
-  "fire-engine;playwright": meta =>
-    fireEngineMaxReasonableTime(meta, "playwright"),
-  "fire-engine;playwright;stealth": meta =>
-    fireEngineMaxReasonableTime(meta, "playwright"),
   "fire-engine;tlsclient": meta =>
     fireEngineMaxReasonableTime(meta, "tlsclient"),
   "fire-engine;tlsclient;stealth": meta =>
@@ -185,6 +187,7 @@ const engineMRTs: {
   fetch: fetchMaxReasonableTime,
   pdf: pdfMaxReasonableTime,
   document: documentMaxReasonableTime,
+  wikipedia: wikipediaMaxReasonableTime,
 };
 
 const engineOptions: {
@@ -210,7 +213,7 @@ const engineOptions: {
       location: true,
       skipTlsVerification: true,
       useFastMode: true,
-      stealthProxy: false,
+      stealthProxy: true,
       branding: false,
       disableAdblock: true,
     },
@@ -267,7 +270,7 @@ const engineOptions: {
       mobile: true,
       skipTlsVerification: true,
       useFastMode: true,
-      stealthProxy: false,
+      stealthProxy: true,
       branding: false,
       disableAdblock: false,
     },
@@ -310,44 +313,6 @@ const engineOptions: {
       disableAdblock: false,
     },
     quality: -5,
-  },
-  "fire-engine;playwright": {
-    features: {
-      actions: false,
-      waitFor: true,
-      screenshot: true,
-      "screenshot@fullScreen": true,
-      pdf: false,
-      document: false,
-      atsv: false,
-      location: false,
-      mobile: false,
-      skipTlsVerification: false,
-      useFastMode: false,
-      stealthProxy: false,
-      branding: false,
-      disableAdblock: true,
-    },
-    quality: 40,
-  },
-  "fire-engine;playwright;stealth": {
-    features: {
-      actions: false,
-      waitFor: true,
-      screenshot: true,
-      "screenshot@fullScreen": true,
-      pdf: false,
-      document: false,
-      atsv: false,
-      location: false,
-      mobile: false,
-      skipTlsVerification: false,
-      useFastMode: false,
-      stealthProxy: true,
-      branding: false,
-      disableAdblock: true,
-    },
-    quality: -10,
   },
   playwright: {
     features: {
@@ -463,6 +428,25 @@ const engineOptions: {
     },
     quality: -20,
   },
+  wikipedia: {
+    features: {
+      actions: false,
+      waitFor: false,
+      screenshot: false,
+      "screenshot@fullScreen": false,
+      pdf: false,
+      document: false,
+      atsv: false,
+      location: false,
+      mobile: false,
+      skipTlsVerification: true,
+      useFastMode: true,
+      stealthProxy: false,
+      branding: false,
+      disableAdblock: true,
+    },
+    quality: 500, // below index (1000) so cache is tried first, above fire-engine (50)
+  },
 };
 
 export function shouldUseIndex(meta: Meta) {
@@ -483,8 +467,7 @@ export function shouldUseIndex(meta: Meta) {
     meta.options.maxAge !== 0 &&
     (meta.options.headers === undefined ||
       Object.keys(meta.options.headers).length === 0) &&
-    (meta.options.actions === undefined || meta.options.actions.length === 0) &&
-    meta.options.proxy !== "stealth"
+    (meta.options.actions === undefined || meta.options.actions.length === 0)
   );
 }
 
@@ -510,9 +493,7 @@ export async function buildFallbackList(meta: Meta): Promise<
           "fire-engine(retry);chrome-cdp",
           "fire-engine;chrome-cdp;stealth",
           "fire-engine(retry);chrome-cdp;stealth",
-          "fire-engine;playwright",
           // "fire-engine;tlsclient",
-          // "fire-engine;playwright;stealth",
           // "fire-engine;tlsclient;stealth",
         ] as Engine[])
       : []),
@@ -526,6 +507,13 @@ export async function buildFallbackList(meta: Meta): Promise<
     const indexDocumentsIndex = _engines.indexOf("index;documents");
     if (indexDocumentsIndex !== -1) {
       _engines.splice(indexDocumentsIndex, 1);
+    }
+  }
+
+  if (!isWikimediaUrl(meta.url)) {
+    const wikiIndex = _engines.indexOf("wikipedia");
+    if (wikiIndex !== -1) {
+      _engines.splice(wikiIndex, 1);
     }
   }
 
@@ -572,7 +560,11 @@ export async function buildFallbackList(meta: Meta): Promise<
     }
   }
 
-  if (selectedEngines.some(x => engineOptions[x.engine].quality > 0)) {
+  if (
+    selectedEngines.some(
+      x => engineOptions[x.engine].quality > 0 && !x.engine.startsWith("index"),
+    )
+  ) {
     selectedEngines = selectedEngines.filter(
       x => engineOptions[x.engine].quality > 0,
     );
@@ -639,7 +631,10 @@ export async function scrapeURLWithEngine(
   });
 
   const featureFlags = new Set(meta.featureFlags);
-  if (engineOptions[engine].features.stealthProxy) {
+  if (
+    engineOptions[engine].features.stealthProxy &&
+    !engine.startsWith("index") // don't force stealth proxy for index
+  ) {
     featureFlags.add("stealthProxy");
   }
 

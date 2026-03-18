@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { config } from "../../config";
 import { logger } from "../../lib/logger";
 import { supabase_rr_service } from "../supabase";
@@ -7,12 +8,15 @@ import type {
   CreateEntityResult,
   EnsureOrgProvisionedParams,
   EnsureTeamProvisionedParams,
+  FinalizeCreditsLockParams,
   GetEntityParams,
   GetOrCreateCustomerParams,
+  LockCreditsParams,
   TrackCreditsParams,
   TrackParams,
 } from "./types";
 
+const TEAM_FEATURE_ID = "TEAM";
 const CREDITS_FEATURE_ID = "CREDITS";
 
 /**
@@ -35,15 +39,32 @@ export function orgBucket(orgId: string): number {
  * stable percent gate is also evaluated so the same org always gets the
  * same answer.
  *
- * Only checked at the top-level billing entry point (`reserveCredits`).
- * NOT checked by `refundCredits` (already guarded by `autumnReserved`) or
- * `ensureTeamProvisioned` (handled by firecrawl-web edge functions
- * independently).
+ * Only checked at the top-level billing entry points (`lockCredits` and the
+ * direct-track `trackCredits`).
+ * NOT checked by `finalizeCreditsLock`, `refundCredits`, or
+ * `ensureTeamProvisioned`.
  */
 export function isAutumnEnabled(orgId?: string): boolean {
   if (config.AUTUMN_EXPERIMENT !== "true") return false;
   if (!orgId || config.AUTUMN_EXPERIMENT_PERCENT >= 100) return true;
   return orgBucket(orgId) < config.AUTUMN_EXPERIMENT_PERCENT;
+}
+
+export function isAutumnCheckEnabled(orgId?: string): boolean {
+  if (config.AUTUMN_CHECK_ENABLED !== "true") return false;
+  if (config.AUTUMN_EXPERIMENT !== "true") return false;
+  const percent = config.AUTUMN_CHECK_EXPERIMENT_PERCENT ?? 100;
+  if (!orgId || percent >= 100) return true;
+  return orgBucket(orgId) < percent;
+}
+
+export function isAutumnRequestTrackEnabled(orgId?: string): boolean {
+  if (config.AUTUMN_REQUEST_TRACK_EXPERIMENT !== "true") return false;
+  if (!isAutumnEnabled(orgId)) return false;
+  if (!orgId || config.AUTUMN_REQUEST_TRACK_EXPERIMENT_PERCENT >= 100) {
+    return true;
+  }
+  return orgBucket(orgId) < config.AUTUMN_REQUEST_TRACK_EXPERIMENT_PERCENT;
 }
 
 const AUTUMN_DEFAULT_PLAN_ID = "free";
@@ -200,8 +221,8 @@ export class AutumnService {
     featureId,
     value,
     properties,
-  }: TrackParams): Promise<void> {
-    if (!autumnClient) return;
+  }: TrackParams): Promise<boolean> {
+    if (!autumnClient) return false;
 
     try {
       await autumnClient.track({
@@ -217,6 +238,7 @@ export class AutumnService {
         featureId,
         value,
       });
+      return true;
     } catch (error) {
       logger.warn("Autumn track failed", {
         customerId,
@@ -225,6 +247,7 @@ export class AutumnService {
         value,
         error,
       });
+      return false;
     }
   }
 
@@ -277,10 +300,10 @@ export class AutumnService {
         const result = await this.createEntity({
           customerId: resolvedOrgId,
           entityId: teamId,
-          featureId: CREDITS_FEATURE_ID,
+          featureId: TEAM_FEATURE_ID,
           name,
         });
-        if (result.ok || result.conflict) {
+        if (result.ok || ("conflict" in result && result.conflict)) {
           // Entity was just created, or already existed (409 race) — either way
           // it's present. No need for a second getEntity confirmation call.
           this.ensuredTeams.add(teamId);
@@ -323,39 +346,187 @@ export class AutumnService {
   }
 
   /**
-   * Records a credit usage event in Autumn at request time.
-   * Returns true on success, false if Autumn is unavailable or an error occurs.
+   * Checks whether a team has enough Autumn balance to cover a request.
+   * Returns null when Autumn gating is unavailable and callers should fall back.
+   */
+  async checkCredits({
+    teamId,
+    value,
+    properties,
+  }: TrackCreditsParams): Promise<boolean | null> {
+    if (
+      !isAutumnCheckEnabled() ||
+      !autumnClient ||
+      this.isPreviewTeam(teamId)
+    ) {
+      return null;
+    }
+
+    try {
+      const orgId = await this.resolveOrgId(teamId);
+      if (!isAutumnCheckEnabled(orgId)) return null;
+
+      const customerId = await this.ensureTrackingContext(teamId);
+      const { allowed } = await autumnClient.check({
+        customerId,
+        entityId: teamId,
+        featureId: CREDITS_FEATURE_ID,
+        requiredBalance: value,
+        properties,
+      });
+
+      logger.debug("Autumn checkCredits completed", {
+        customerId,
+        entityId: teamId,
+        featureId: CREDITS_FEATURE_ID,
+        value,
+        allowed,
+      });
+      return allowed;
+    } catch (error) {
+      logger.warn("Autumn checkCredits failed", {
+        teamId,
+        value,
+        error,
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Reserves a team's credits in Autumn without letting Autumn gate usage.
+   * Returns the lock ID on success, or null if no lock was acquired.
+   */
+  async lockCredits({
+    teamId,
+    value,
+    lockId,
+    expiresAt,
+    properties,
+  }: LockCreditsParams): Promise<string | null> {
+    if (!isAutumnEnabled() || !autumnClient || this.isPreviewTeam(teamId)) {
+      return null;
+    }
+
+    const resolvedLockId = lockId ?? `billing_${randomUUID()}`;
+
+    try {
+      const orgId = await this.resolveOrgId(teamId);
+      if (!isAutumnEnabled(orgId)) return null;
+
+      const customerId = await this.ensureTrackingContext(teamId);
+      const { allowed } = await autumnClient.check({
+        customerId,
+        entityId: teamId,
+        featureId: CREDITS_FEATURE_ID,
+        requiredBalance: value,
+        properties,
+        lock: {
+          enabled: true,
+          lockId: resolvedLockId,
+          expiresAt,
+        },
+      });
+
+      if (!allowed) {
+        logger.info("Autumn lockCredits denied", {
+          teamId,
+          value,
+          lockId: resolvedLockId,
+        });
+        return null;
+      }
+
+      logger.info("Autumn lockCredits succeeded", {
+        customerId,
+        entityId: teamId,
+        featureId: CREDITS_FEATURE_ID,
+        value,
+        lockId: resolvedLockId,
+        properties,
+      });
+      return resolvedLockId;
+    } catch (error) {
+      logger.warn("Autumn lockCredits failed", {
+        teamId,
+        value,
+        lockId: resolvedLockId,
+        error,
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Finalizes a previously-acquired Autumn lock.
+   */
+  async finalizeCreditsLock({
+    lockId,
+    action,
+    overrideValue,
+    properties,
+  }: FinalizeCreditsLockParams): Promise<void> {
+    if (!autumnClient) return;
+
+    try {
+      await autumnClient.balances.finalize({
+        lockId,
+        action,
+        overrideValue,
+        properties,
+      });
+      logger.info("Autumn finalizeCreditsLock succeeded", {
+        lockId,
+        action,
+        overrideValue,
+      });
+    } catch (error) {
+      logger.warn("Autumn finalizeCreditsLock failed", {
+        lockId,
+        action,
+        overrideValue,
+        error,
+      });
+    }
+  }
+
+  /**
+   * Records a credit usage event directly in Autumn. Returns true on success.
    *
    * The experiment gate is evaluated here — once per request — using a stable
    * bucket derived from the org UUID so the same org always gets the same
    * answer for a given AUTUMN_EXPERIMENT_PERCENT value.
    */
-  async reserveCredits({
+  async trackCredits({
     teamId,
     value,
     properties,
+    requestScoped = false,
   }: TrackCreditsParams): Promise<boolean> {
-    if (!isAutumnEnabled()) return false; // fast bail-out: experiment off
+    const isEnabled = requestScoped
+      ? isAutumnRequestTrackEnabled
+      : isAutumnEnabled;
+    if (!isEnabled()) return false;
     if (!autumnClient) return false;
     if (this.isPreviewTeam(teamId)) return false;
 
     try {
       const orgId = await this.resolveOrgId(teamId);
-      if (!isAutumnEnabled(orgId)) return false; // stable percent gate
+      if (!isEnabled(orgId)) return false;
 
       const customerId = await this.ensureTrackingContext(teamId);
-      await this.track({
+      return await this.track({
         customerId,
         entityId: teamId,
         featureId: CREDITS_FEATURE_ID,
         value,
         properties,
       });
-      return true;
     } catch (error) {
-      logger.warn("Autumn reserveCredits failed", {
+      logger.warn("Autumn trackCredits failed", {
         teamId,
         value,
+        requestScoped,
         error,
       });
       return false;
@@ -363,7 +534,7 @@ export class AutumnService {
   }
 
   /**
-   * Reverses a prior reserveCredits call by tracking a negative usage event.
+   * Reverses a prior trackCredits call by tracking a negative usage event.
    */
   async refundCredits({
     teamId,

@@ -32,6 +32,7 @@ import {
   applyZdrScope,
   captureExceptionWithZdrCheck,
 } from "../../services/sentry";
+import { getSearchZDR } from "../../lib/zdr-helpers";
 
 interface DocumentWithCostTracking {
   document: Document;
@@ -61,7 +62,7 @@ async function startX420ScrapeJob(
 ): Promise<string> {
   const jobId = uuidv7();
 
-  const zeroDataRetention = flags?.forceZDR ?? false;
+  const zeroDataRetention = getSearchZDR(flags) === "forced";
   applyZdrScope(zeroDataRetention);
 
   logger.info("Adding scrape job [x402]", {
@@ -210,10 +211,10 @@ export async function x402SearchController(
     teamId: req.auth.team_id,
     module: "api/v2",
     method: "x402SearchController",
-    zeroDataRetention: req.acuc?.flags?.forceZDR,
+    zeroDataRetention: getSearchZDR(req.acuc?.flags) === "forced",
   });
 
-  if (req.acuc?.flags?.forceZDR) {
+  if (getSearchZDR(req.acuc?.flags) === "forced") {
     return res.status(400).json({
       success: false,
       error:
@@ -241,6 +242,20 @@ export async function x402SearchController(
       query: req.body.query,
       origin: req.body.origin,
     });
+
+    // Verify the team has searchZDR enabled before allowing enterprise ZDR/anon
+    const isZDR = req.body.enterprise?.includes("zdr");
+    const isAnon = req.body.enterprise?.includes("anon");
+    if (isZDR || isAnon) {
+      const searchMode = getSearchZDR(req.acuc?.flags);
+      if (searchMode !== "allowed" && searchMode !== "forced") {
+        return res.status(403).json({
+          success: false,
+          error:
+            "Zero Data Retention (ZDR) search is not enabled for your team. Contact support@firecrawl.com to enable this feature.",
+        });
+      }
+    }
 
     await logRequest({
       id: jobId,

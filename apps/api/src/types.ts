@@ -9,6 +9,7 @@ import { AuthCreditUsageChunk } from "./controllers/v1/types";
 import { ExtractorOptions, Document } from "./lib/entities";
 import { InternalOptions } from "./scraper/scrapeURL";
 import type { CostTracking } from "./lib/cost-tracking";
+import type { BillingMetadata } from "./services/billing/types";
 import { webhookSchema } from "./services/webhook/schema";
 import { SerializedTraceContext } from "./lib/otel-tracer";
 
@@ -16,6 +17,7 @@ type ScrapeJobCommon = {
   concurrencyLimited?: boolean;
   team_id: string;
   zeroDataRetention: boolean;
+  billing?: BillingMetadata;
   traceContext?: SerializedTraceContext;
   skipNuq?: boolean;
   requestId?: string;
@@ -149,6 +151,7 @@ export type AuthResponse =
   | {
       success: true;
       team_id: string;
+      org_id?: string | null;
       api_key?: string;
       chunk: AuthCreditUsageChunk | null;
     }

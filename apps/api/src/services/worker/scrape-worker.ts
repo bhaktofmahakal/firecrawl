@@ -31,6 +31,11 @@ import {
 } from "../../lib/crawl-redis";
 import { redisEvictConnection } from "../redis";
 import {
+  resolveBillingMetadata,
+  toAutumnBillingProperties,
+} from "../billing/types";
+import { autumnService } from "../autumn/autumn.service";
+import {
   _addScrapeJobToBullMQ,
   addScrapeJob,
   addScrapeJobs,
@@ -98,6 +103,17 @@ async function billScrapeJob(
   unsupportedFeatures?: Set<FeatureFlag>,
 ) {
   let creditsToBeBilled: number | null = null;
+  const billing = resolveBillingMetadata({
+    billing: job.data.billing,
+    crawlId: job.data.crawl_id,
+    crawlerOptions: job.data.crawlerOptions,
+  });
+  const autumnProperties = {
+    source: "billScrapeJob",
+    ...toAutumnBillingProperties(billing),
+    apiKeyId: job.data.apiKeyId,
+  };
+  let trackedInRequest = false;
 
   if (job.data.is_scrape !== true && !job.data.internalOptions?.bypassBilling) {
     creditsToBeBilled = await calculateCreditsToBeBilled(
@@ -115,11 +131,18 @@ async function billScrapeJob(
       config.USE_DB_AUTHENTICATION
     ) {
       try {
+        trackedInRequest = await autumnService.trackCredits({
+          teamId: job.data.team_id,
+          value: creditsToBeBilled,
+          properties: autumnProperties,
+          requestScoped: true,
+        });
         const billingJobId = uuidv7();
         logger.debug(
           `Adding billing job to queue for team ${job.data.team_id}`,
           {
             billingJobId,
+            billing,
             credits: creditsToBeBilled,
             is_extract: false,
           },
@@ -132,22 +155,32 @@ async function billScrapeJob(
             team_id: job.data.team_id,
             subscription_id: undefined,
             credits: creditsToBeBilled,
+            billing,
             is_extract: false,
             timestamp: new Date().toISOString(),
             originating_job_id: job.id,
             api_key_id: job.data.apiKeyId,
+            autumnTrackInRequest: trackedInRequest,
           },
           {
             jobId: billingJobId,
             priority: 10,
           },
         );
+
         return creditsToBeBilled;
       } catch (error) {
         logger.error(
           `Failed to add billing job to queue for team ${job.data.team_id} for ${creditsToBeBilled} credits`,
           { error },
         );
+        if (trackedInRequest && creditsToBeBilled !== null) {
+          await autumnService.refundCredits({
+            teamId: job.data.team_id,
+            value: creditsToBeBilled,
+            properties: autumnProperties,
+          });
+        }
         captureExceptionWithZdrCheck(error, {
           extra: { zeroDataRetention: job.data.zeroDataRetention ?? false },
         });
@@ -408,6 +441,7 @@ async function processJob(job: NuQJob<ScrapeJobSingleUrls>) {
                     integration: job.data.integration,
                     crawl_id: job.data.crawl_id,
                     requestId: job.data.requestId,
+                    billing: job.data.billing,
                     webhook: job.data.webhook,
                     v1: job.data.v1,
                     zeroDataRetention: job.data.zeroDataRetention,
@@ -797,6 +831,7 @@ async function addKickoffSitemapJob(
       integration: sourceJob.data.integration,
       crawl_id: sourceJob.data.crawl_id,
       requestId: sourceJob.data.requestId,
+      billing: sourceJob.data.billing,
       webhook: sourceJob.data.webhook,
       v1: sourceJob.data.v1,
       apiKeyId: sourceJob.data.apiKeyId,
@@ -849,6 +884,7 @@ async function processKickoffJob(job: NuQJob<ScrapeJobKickoff>) {
         integration: job.data.integration,
         crawl_id: job.data.crawl_id,
         requestId: job.data.requestId,
+        billing: job.data.billing,
         webhook: job.data.webhook,
         v1: job.data.v1,
         isCrawlSourceScrape: true,
@@ -936,6 +972,7 @@ async function processKickoffJob(job: NuQJob<ScrapeJobKickoff>) {
             integration: job.data.integration,
             crawl_id: job.data.crawl_id,
             requestId: job.data.requestId,
+            billing: job.data.billing,
             sitemapped: true,
             webhook: job.data.webhook,
             v1: job.data.v1,
@@ -1048,6 +1085,7 @@ async function processKickoffSitemapJob(job: NuQJob<ScrapeJobKickoffSitemap>) {
           integration: job.data.integration,
           crawl_id: job.data.crawl_id,
           requestId: job.data.requestId,
+          billing: job.data.billing,
           sitemapped: true,
           webhook: job.data.webhook,
           v1: job.data.v1,

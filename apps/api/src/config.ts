@@ -48,8 +48,12 @@ const configSchema = z.object({
   LLAMAPARSE_API_KEY: z.string().optional(),
   STRIPE_SECRET_KEY: z.string().optional(),
   AUTUMN_SECRET_KEY: z.string().optional(),
+  AUTUMN_CHECK_ENABLED: z.string().optional(),
+  AUTUMN_CHECK_EXPERIMENT_PERCENT: z.coerce.number().default(100),
   AUTUMN_EXPERIMENT: z.string().optional(),
   AUTUMN_EXPERIMENT_PERCENT: z.coerce.number().default(100),
+  AUTUMN_REQUEST_TRACK_EXPERIMENT: z.string().optional(),
+  AUTUMN_REQUEST_TRACK_EXPERIMENT_PERCENT: z.coerce.number().default(100),
   RESEND_API_KEY: z.string().optional(),
   PREVIEW_TOKEN: z.string().optional(),
   SEARCH_PREVIEW_TOKEN: z.string().optional(),
@@ -229,6 +233,10 @@ const configSchema = z.object({
 
   EXTRACT_V3_BETA_URL: z.string().optional(),
   AGENT_INTEROP_SECRET: z.string().optional(),
+
+  // Wikipedia Enterprise API
+  WIKIPEDIA_ENTERPRISE_USERNAME: z.string().optional(),
+  WIKIPEDIA_ENTERPRISE_PASSWORD: z.string().optional(),
 
   // Browser Service
   BROWSER_SERVICE_URL: z.string().optional(),

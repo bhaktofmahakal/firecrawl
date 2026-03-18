@@ -25,6 +25,7 @@ import { ScrapeJobTimeoutError } from "../../lib/error";
 import { scrapeQueue } from "../../services/worker/nuq";
 import { getErrorContactMessage } from "../../lib/deployment";
 import { logRequest } from "../../services/logging/log_job";
+import { getScrapeZDR } from "../../lib/zdr-helpers";
 
 async function scrapeHelper(
   jobId: string,
@@ -91,6 +92,7 @@ async function scrapeHelper(
       internalOptions,
       origin: req.body.origin ?? defaultOrigin,
       integration: req.body.integration,
+      billing: { endpoint: "scrape", jobId },
       startTime: Date.now(),
       zeroDataRetention: false, // not supported on v0
       apiKeyId,
@@ -184,7 +186,7 @@ export async function scrapeController(req: Request, res: Response) {
 
     const { team_id, chunk } = auth;
 
-    if (chunk?.flags?.forceZDR) {
+    if (getScrapeZDR(chunk?.flags) === "forced") {
       return res.status(400).json({
         error:
           "Your team has zero data retention enabled. This is not supported on the v0 API. Please update your code to use the v1 API.",

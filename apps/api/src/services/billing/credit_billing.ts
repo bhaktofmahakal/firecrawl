@@ -9,6 +9,7 @@ import { autoCharge } from "./auto_charge";
 import { getValue, setValue } from "../redis";
 import { queueBillingOperation } from "./batch_billing";
 import { autumnService } from "../autumn/autumn.service";
+import { toAutumnBillingProperties, type BillingMetadata } from "./types";
 import type { Logger } from "winston";
 
 /**
@@ -19,6 +20,7 @@ export async function billTeam(
   subscription_id: string | null | undefined,
   credits: number,
   api_key_id: number | null,
+  billing: BillingMetadata,
   logger?: Logger,
 ) {
   return withAuth(
@@ -27,26 +29,43 @@ export async function billTeam(
       subscription_id: string | null | undefined,
       credits: number,
       api_key_id: number | null,
+      billing: BillingMetadata,
       logger: Logger | undefined,
     ) => {
-      // Reserve in Autumn at request time; await so autumnReserved is accurate.
-      // billTeam is fire-and-forget at call sites, so this doesn't block responses.
-      const autumnReserved = await autumnService.reserveCredits({
+      const autumnProperties = {
+        source: "billTeam",
+        ...toAutumnBillingProperties(billing),
+        apiKeyId: api_key_id,
+      };
+      const trackedInRequest = await autumnService.trackCredits({
         teamId: team_id,
         value: credits,
-        properties: { source: "billTeam", apiKeyId: api_key_id },
+        properties: autumnProperties,
+        requestScoped: true,
       });
-      return queueBillingOperation(
+
+      const result = await queueBillingOperation(
         team_id,
         subscription_id,
         credits,
         api_key_id,
+        billing,
         false,
-        autumnReserved,
+        trackedInRequest,
       );
+
+      if (!result.success && trackedInRequest) {
+        await autumnService.refundCredits({
+          teamId: team_id,
+          value: credits,
+          properties: autumnProperties,
+        });
+      }
+
+      return result;
     },
     { success: true, message: "No DB, bypassed." },
-  )(team_id, subscription_id, credits, api_key_id, logger);
+  )(team_id, subscription_id, credits, api_key_id, billing, logger);
 }
 
 type CheckTeamCreditsResponse = {
@@ -66,6 +85,33 @@ export async function checkTeamCredits(
     message: "No DB, bypassed",
     remainingCredits: Infinity,
   })(chunk, team_id, credits);
+}
+
+function evaluateTeamCredits(
+  chunk: AuthCreditUsageChunk,
+  credits: number,
+  isAutoRechargeEnabled: boolean,
+) {
+  const allowOverages =
+    chunk.price_should_be_graceful && isAutoRechargeEnabled;
+  const remainingCredits = allowOverages
+    ? chunk.remaining_credits + chunk.price_credits
+    : chunk.remaining_credits;
+  const creditsWillBeUsed = chunk.adjusted_credits_used + credits;
+  const totalPriceCredits = allowOverages
+    ? (chunk.total_credits_sum ?? 100000000) + chunk.price_credits
+    : (chunk.total_credits_sum ?? 100000000);
+  const creditUsagePercentage =
+    chunk.adjusted_credits_used / (chunk.total_credits_sum ?? 100000000);
+
+  return {
+    allowOverages,
+    remainingCredits,
+    creditsWillBeUsed,
+    totalPriceCredits,
+    creditUsagePercentage,
+    success: creditsWillBeUsed <= totalPriceCredits,
+  };
 }
 
 // if team has enough credits for the operation, return true, else return false
@@ -117,23 +163,14 @@ async function supaCheckTeamCredits(
     }
   }
 
-  // Graceful billing only applies if the plan supports it AND auto-recharge is enabled
-  const allowOverages = chunk.price_should_be_graceful && isAutoRechargeEnabled;
-
-  const remainingCredits = allowOverages
-    ? chunk.remaining_credits + chunk.price_credits
-    : chunk.remaining_credits;
-
-  const creditsWillBeUsed = chunk.adjusted_credits_used + credits;
-
-  // In case chunk.price_credits is undefined, set it to a large number to avoid mistakes
-  const totalPriceCredits = allowOverages
-    ? (chunk.total_credits_sum ?? 100000000) + chunk.price_credits
-    : (chunk.total_credits_sum ?? 100000000);
-
-  // Removal of + credits
-  const creditUsagePercentage =
-    chunk.adjusted_credits_used / (chunk.total_credits_sum ?? 100000000);
+  const {
+    success,
+    allowOverages,
+    remainingCredits,
+    creditsWillBeUsed,
+    totalPriceCredits,
+    creditUsagePercentage,
+  } = evaluateTeamCredits(chunk, credits, isAutoRechargeEnabled);
 
   if (
     isAutoRechargeEnabled &&
@@ -189,7 +226,7 @@ async function supaCheckTeamCredits(
   }
 
   // Compare the adjusted total credits used with the credits allowed by the plan (and graceful)
-  if (creditsWillBeUsed > totalPriceCredits) {
+  if (!success) {
     logger.warn("Credit check failed - insufficient credits", {
       team_id,
       teamId: team_id,
@@ -226,7 +263,7 @@ async function supaCheckTeamCredits(
   return {
     success: true,
     message: "Sufficient credits available",
-    remainingCredits: chunk.remaining_credits,
+    remainingCredits,
     chunk,
   };
 }

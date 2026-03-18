@@ -30,6 +30,7 @@ import {
 } from "../../services/index";
 import { MapTimeoutError } from "../../lib/error";
 import { checkPermissions } from "../../lib/permissions";
+import { getScrapeZDR } from "../../lib/zdr-helpers";
 
 configDotenv();
 const redis = new Redis(config.REDIS_URL!);
@@ -126,7 +127,7 @@ export async function getMapResults({
   let links: string[] = [url];
   let mapResults: MapDocument[] = [];
 
-  const zeroDataRetention = flags?.forceZDR || false;
+  const zeroDataRetention = getScrapeZDR(flags) === "forced" || false;
 
   const sc: StoredCrawl = {
     originUrl: url,
@@ -369,7 +370,7 @@ export async function mapController(
   const originalRequest = req.body;
   req.body = mapRequestSchema.parse(req.body);
 
-  if (req.acuc?.flags?.forceZDR) {
+  if (getScrapeZDR(req.acuc?.flags) === "forced") {
     return res.status(400).json({
       success: false,
       error:
@@ -468,6 +469,7 @@ export async function mapController(
     req.acuc?.sub_id,
     1,
     req.acuc?.api_key_id ?? null,
+    { endpoint: "map", jobId: mapId },
   ).catch(error => {
     logger.error(
       `Failed to bill team ${req.auth.team_id} for 1 credit: ${error}`,
