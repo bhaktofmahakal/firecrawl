@@ -27,6 +27,7 @@ import { supabase_service } from "../services/supabase";
 import {
   autumnService,
   isAutumnCheckEnabled,
+  isAutumnCheckDryRun,
 } from "../services/autumn/autumn.service";
 
 export function checkCreditsMiddleware(
@@ -84,6 +85,9 @@ export function checkCreditsMiddleware(
               upgrade_url: "https://firecrawl.dev/pricing",
             });
           }
+
+          // Force index-only mode for all pre-confirmation agent requests
+          (req as any).agentIndexOnly = true;
         }
         // If verified, fall through to normal credit check (key is now on real account)
       }
@@ -142,6 +146,7 @@ export function checkCreditsMiddleware(
       let { success, remainingCredits, chunk } = legacyCheck;
 
       if (autumnAllowed !== null) {
+        const dryRun = isAutumnCheckDryRun();
         if (autumnAllowed !== legacyCheck.success) {
           logger.warn("Autumn check result diverged from legacy credit gate", {
             teamId: req.auth.team_id,
@@ -149,9 +154,20 @@ export function checkCreditsMiddleware(
             requestedCredits,
             autumnAllowed,
             legacyAllowed: legacyCheck.success,
+            dryRun,
           });
         }
-        success = autumnAllowed;
+        if (dryRun) {
+          logger.info("Autumn check dry-run result (not enforced)", {
+            teamId: req.auth.team_id,
+            path: req.path,
+            requestedCredits,
+            autumnAllowed,
+            legacyAllowed: legacyCheck.success,
+          });
+        } else {
+          success = autumnAllowed;
+        }
         remainingCredits = legacyCheck.remainingCredits;
       }
 

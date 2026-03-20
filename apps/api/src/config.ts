@@ -49,6 +49,7 @@ const configSchema = z.object({
   STRIPE_SECRET_KEY: z.string().optional(),
   AUTUMN_SECRET_KEY: z.string().optional(),
   AUTUMN_CHECK_ENABLED: z.string().optional(),
+  AUTUMN_CHECK_DRY_RUN: z.string().optional(),
   AUTUMN_CHECK_EXPERIMENT_PERCENT: z.coerce.number().default(100),
   AUTUMN_EXPERIMENT: z.string().optional(),
   AUTUMN_EXPERIMENT_PERCENT: z.coerce.number().default(100),
@@ -156,6 +157,12 @@ const configSchema = z.object({
   PDF_MU_V2_API_KEY: z.string().optional(),
   PDF_MU_V2_EXPERIMENT: z.string().optional(),
   PDF_MU_V2_EXPERIMENT_PERCENT: z.coerce.number().default(100),
+
+  // Self-Hosted OCR Experiment
+  PDF_OCR_EXPERIMENT_ENABLE: z.stringbool().optional(),
+  PDF_OCR_EXPERIMENT_PERCENT: z.coerce.number().min(0).max(100).default(10),
+  PDF_OCR_BASE_URL: z.string().optional(),
+  PDF_OCR_API_KEY: z.string().optional(),
 
   // RunPod
   RUNPOD_MU_API_KEY: z.string().optional(),

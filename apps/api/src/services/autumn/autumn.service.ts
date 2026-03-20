@@ -20,6 +20,15 @@ const TEAM_FEATURE_ID = "TEAM";
 const CREDITS_FEATURE_ID = "CREDITS";
 
 /**
+ * Org IDs that always have Autumn enabled, regardless of experiment
+ * percentage or feature flags.
+ */
+export const AUTUMN_BYPASS_ORG_IDS = new Set([
+  "318e9dfd-9d76-489d-86fa-64bcbc3682f9", // Autumn
+  "601f9bf3-425c-4309-97ae-4626842738d5", // Autumn
+]);
+
+/**
  * Deterministic bucket for an org UUID.
  *
  * Takes the first 8 hex digits of the id (after stripping dashes) and maps
@@ -45,12 +54,14 @@ export function orgBucket(orgId: string): number {
  * `ensureTeamProvisioned`.
  */
 export function isAutumnEnabled(orgId?: string): boolean {
+  if (orgId && AUTUMN_BYPASS_ORG_IDS.has(orgId)) return true;
   if (config.AUTUMN_EXPERIMENT !== "true") return false;
   if (!orgId || config.AUTUMN_EXPERIMENT_PERCENT >= 100) return true;
   return orgBucket(orgId) < config.AUTUMN_EXPERIMENT_PERCENT;
 }
 
 export function isAutumnCheckEnabled(orgId?: string): boolean {
+  if (orgId && AUTUMN_BYPASS_ORG_IDS.has(orgId)) return true;
   if (config.AUTUMN_CHECK_ENABLED !== "true") return false;
   if (config.AUTUMN_EXPERIMENT !== "true") return false;
   const percent = config.AUTUMN_CHECK_EXPERIMENT_PERCENT ?? 100;
@@ -58,7 +69,16 @@ export function isAutumnCheckEnabled(orgId?: string): boolean {
   return orgBucket(orgId) < percent;
 }
 
+/**
+ * When true, Autumn check results are logged but never used to gate requests.
+ * The legacy credit system remains authoritative.
+ */
+export function isAutumnCheckDryRun(): boolean {
+  return config.AUTUMN_CHECK_DRY_RUN === "true";
+}
+
 export function isAutumnRequestTrackEnabled(orgId?: string): boolean {
+  if (orgId && AUTUMN_BYPASS_ORG_IDS.has(orgId)) return true;
   if (config.AUTUMN_REQUEST_TRACK_EXPERIMENT !== "true") return false;
   if (!isAutumnEnabled(orgId)) return false;
   if (!orgId || config.AUTUMN_REQUEST_TRACK_EXPERIMENT_PERCENT >= 100) {
@@ -354,11 +374,7 @@ export class AutumnService {
     value,
     properties,
   }: TrackCreditsParams): Promise<boolean | null> {
-    if (
-      !isAutumnCheckEnabled() ||
-      !autumnClient ||
-      this.isPreviewTeam(teamId)
-    ) {
+    if (!autumnClient || this.isPreviewTeam(teamId)) {
       return null;
     }
 
@@ -404,7 +420,7 @@ export class AutumnService {
     expiresAt,
     properties,
   }: LockCreditsParams): Promise<string | null> {
-    if (!isAutumnEnabled() || !autumnClient || this.isPreviewTeam(teamId)) {
+    if (!autumnClient || this.isPreviewTeam(teamId)) {
       return null;
     }
 

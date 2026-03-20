@@ -1081,6 +1081,8 @@ export type ErrorResponse = {
   code?: ErrorCodes;
   error: string;
   details?: any;
+  sponsor_status?: string;
+  login_url?: string;
 };
 
 export type ScrapeResponse =
@@ -1291,6 +1293,7 @@ export type TeamFlags = {
   browserBeta?: boolean;
   bypassCreditChecks?: boolean;
   debugBranding?: boolean;
+  maxBrowserSessions?: number;
 } | null;
 
 export type AuthCreditUsageChunkFromTeam = Omit<
