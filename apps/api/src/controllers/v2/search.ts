@@ -232,7 +232,8 @@ export async function searchController(
     });
     return res.status(500).json({
       success: false,
-      error: error.message,
+      error:
+        "An unexpected error occurred during the search. Please try again or contact support.",
     });
   }
 }

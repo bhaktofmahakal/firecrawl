@@ -93,7 +93,21 @@ export async function consumeExtractJobs(
     async msg => {
       if (!msg) return;
 
-      const data = JSON.parse(msg.content.toString()) as ExtractJobData;
+      let data: ExtractJobData;
+      try {
+        data = JSON.parse(msg.content.toString()) as ExtractJobData;
+      } catch (parseError) {
+        _logger.error("Failed to parse extract job message", {
+          module: "extract-queue",
+          error: parseError,
+          contentLength: msg.content.length,
+          messageId: msg.properties?.messageId,
+        });
+        // Ack to discard the malformed message — it can never be parsed
+        ch.ack(msg);
+        return;
+      }
+
       const logger = _logger.child({
         module: "extract-queue",
         extractId: data.extractId,
@@ -130,7 +144,21 @@ export async function consumeExtractDLQ(
     async msg => {
       if (!msg) return;
 
-      const data = JSON.parse(msg.content.toString()) as ExtractJobData;
+      let data: ExtractJobData;
+      try {
+        data = JSON.parse(msg.content.toString()) as ExtractJobData;
+      } catch (parseError) {
+        _logger.error("Failed to parse DLQ message", {
+          module: "extract-dlq",
+          error: parseError,
+          contentLength: msg.content.length,
+          messageId: msg.properties?.messageId,
+        });
+        // Ack to discard the malformed message — it can never be parsed
+        ch.ack(msg);
+        return;
+      }
+
       const logger = _logger.child({
         module: "extract-dlq",
         extractId: data.extractId,

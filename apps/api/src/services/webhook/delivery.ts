@@ -213,20 +213,87 @@ export async function processWebhookInsertJobs() {
     )) ?? [];
   if (jobs.length === 0) return;
 
-  const parsedJobs = jobs.map(x => JSON.parse(x));
+  const parsedJobs: any[] = [];
+  for (const raw of jobs) {
+    try {
+      const parsed = JSON.parse(raw);
+      // Shape-validate: must be an object with required fields for webhook_logs
+      if (
+        parsed !== null &&
+        typeof parsed === "object" &&
+        !Array.isArray(parsed) &&
+        typeof parsed.team_id === "string" &&
+        typeof parsed.crawl_id === "string" &&
+        typeof parsed.url === "string"
+      ) {
+        parsedJobs.push(parsed);
+      } else {
+        _logger.error("Webhook insert job failed shape validation, skipping", {
+          hasTeamId: typeof parsed?.team_id === "string",
+          hasCrawlId: typeof parsed?.crawl_id === "string",
+          hasUrl: typeof parsed?.url === "string",
+        });
+      }
+    } catch (parseError) {
+      _logger.error("Failed to parse webhook insert job, skipping", {
+        error: parseError,
+        rawContentLength: typeof raw === "string" ? raw.length : undefined,
+      });
+    }
+  }
+  if (parsedJobs.length === 0) return;
   _logger.info("Webhook inserter found jobs to insert", {
     jobCount: parsedJobs.length,
   });
 
   try {
-    await supabase_service.from("webhook_logs").insert(parsedJobs);
+    const { error: insertError } = await supabase_service.from("webhook_logs").insert(parsedJobs);
+    if (insertError) {
+      throw insertError;
+    }
     _logger.info("Webhook inserter inserted jobs", {
       jobCount: parsedJobs.length,
     });
   } catch (error) {
-    _logger.error("Webhook inserter failed to insert jobs", {
+    _logger.warn("Webhook inserter bulk insert failed, falling back to individual inserts", {
       error,
       jobCount: parsedJobs.length,
+    });
+    let inserted = 0;
+    const BATCH_SIZE = 50;
+    for (let batch = 0; batch < parsedJobs.length; batch += BATCH_SIZE) {
+      const chunk = parsedJobs.slice(batch, batch + BATCH_SIZE);
+      const results = await Promise.allSettled(
+        chunk.map(job =>
+          supabase_service.from("webhook_logs").insert(job),
+        ),
+      );
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        const jobIndex = batch + i;
+        if (result.status === "fulfilled") {
+          // Supabase client returns { error } instead of throwing
+          if (result.value?.error) {
+            _logger.error("Webhook inserter failed to insert individual job, skipping", {
+              error: result.value.error,
+              teamId: parsedJobs[jobIndex].team_id,
+              crawlId: parsedJobs[jobIndex].crawl_id,
+            });
+          } else {
+            inserted++;
+          }
+        } else {
+          _logger.error("Webhook inserter failed to insert individual job, skipping", {
+            error: result.reason,
+            teamId: parsedJobs[jobIndex].team_id,
+            crawlId: parsedJobs[jobIndex].crawl_id,
+          });
+        }
+      }
+    }
+    _logger.info("Webhook inserter individual insert completed", {
+      inserted,
+      failed: parsedJobs.length - inserted,
     });
   }
 }
