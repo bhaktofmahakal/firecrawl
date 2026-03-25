@@ -55,3 +55,9 @@ apps/python-sdk/.venv/
 target/
 
 .cursor/
+
+# local files
+_local/
+
+
+apps/api/src/lib/scrape-interact/*.md

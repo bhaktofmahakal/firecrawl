@@ -13,6 +13,7 @@ import {
   mergeScrapedContent,
   calculateScrapeCredits,
 } from "./scrape";
+import type { BillingMetadata } from "../services/billing/types";
 
 interface SearchOptions {
   query: string;
@@ -37,6 +38,8 @@ interface SearchContext {
   requestId: string;
   bypassBilling?: boolean;
   zeroDataRetention?: boolean;
+  billing?: BillingMetadata;
+  agentIndexOnly?: boolean;
 }
 
 interface SearchExecuteResult {
@@ -62,6 +65,7 @@ export async function executeSearch(
     requestId,
     bypassBilling,
     zeroDataRetention,
+    billing,
   } = context;
 
   const num_results_buffer = Math.floor(limit * 2);
@@ -149,6 +153,8 @@ export async function executeSearch(
         apiKeyId,
         zeroDataRetention,
         requestId,
+        billing,
+        agentIndexOnly: context.agentIndexOnly,
       };
 
       const allDocsWithCostTracking = await scrapeSearchResults(

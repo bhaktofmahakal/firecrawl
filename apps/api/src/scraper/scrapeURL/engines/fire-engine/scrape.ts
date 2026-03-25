@@ -53,17 +53,7 @@ export type FireEngineScrapeRequestChromeCDP = {
   blockMedia?: boolean;
   mobile?: boolean;
   disableSmartWaitCache?: boolean;
-};
-
-export type FireEngineScrapeRequestPlaywright = {
-  engine: "playwright";
-  blockAds?: boolean; // default: true
-
-  // mutually exclusive, default: false
-  screenshot?: boolean;
-  fullPageScreenshot?: boolean;
-
-  wait?: number; // default: 0
+  persistentStorage?: { uniqueId: string };
 };
 
 export type FireEngineScrapeRequestTLSClient = {
@@ -88,10 +78,6 @@ const successSchema = z.object({
   // timeTakenCookie: z.number().optional(),
   // timeTakenRequest: z.number().optional(),
 
-  // legacy: playwright only
-  screenshot: z.string().optional(),
-
-  // new: actions
   screenshots: z.string().array().optional(),
   actionContent: z
     .object({
@@ -176,7 +162,6 @@ export const fireEngineStagingURL =
 export async function fireEngineScrape<
   Engine extends
     | FireEngineScrapeRequestChromeCDP
-    | FireEngineScrapeRequestPlaywright
     | FireEngineScrapeRequestTLSClient,
 >(
   meta: Meta,

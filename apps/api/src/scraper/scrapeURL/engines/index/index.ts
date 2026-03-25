@@ -14,7 +14,12 @@ import {
   generateDomainSplits,
   addOMCEJob,
 } from "../../../../services";
-import { EngineError, IndexMissError, NoCachedDataError } from "../../error";
+import {
+  AgentIndexOnlyError,
+  EngineError,
+  IndexMissError,
+  NoCachedDataError,
+} from "../../error";
 import { shouldParsePDF } from "../../../../controllers/v2/types";
 import { hasFormatOfType } from "../../../../lib/format-utils";
 
@@ -48,7 +53,8 @@ export async function sendDocumentToIndex(meta: Meta, document: Document) {
     !meta.featureFlags.has("actions") &&
     !hasCustomScreenshotSettings &&
     (meta.options.headers === undefined ||
-      Object.keys(meta.options.headers).length === 0);
+      Object.keys(meta.options.headers).length === 0) &&
+    meta.options.profile === undefined;
 
   if (!shouldCache) {
     return document;
@@ -151,6 +157,7 @@ export async function sendDocumentToIndex(meta: Meta, document: Document) {
           location_languages: meta.options.location?.languages ?? null,
           status: document.metadata.statusCode,
           is_precrawl: meta.internalOptions.isPreCrawl === true,
+          is_stealth: meta.featureFlags.has("stealthProxy"),
           wait_time_ms: meta.options.waitFor > 0 ? meta.options.waitFor : null,
           ...urlSplitsHash.slice(0, 10).reduce(
             (a, x, i) => ({
@@ -259,7 +266,7 @@ export async function scrapeURLWithIndex(
   const checkpoint1 = Date.now();
 
   const { data, error } = await index_supabase_service.rpc(
-    "index_get_recent_3",
+    "index_get_recent_4",
     {
       p_url_hash: urlHash,
       p_max_age_ms: maxAge,
@@ -275,6 +282,7 @@ export async function scrapeURLWithIndex(
           ? meta.options.location?.languages
           : null,
       p_wait_time_ms: meta.options.waitFor,
+      p_is_stealth: meta.featureFlags.has("stealthProxy"),
       p_min_age_ms: meta.options.minAge ?? null,
     },
   );
@@ -314,6 +322,10 @@ export async function scrapeURLWithIndex(
       timingsSupa: Date.now() - checkpoint1,
     });
 
+    if (meta.internalOptions.agentIndexOnly) {
+      throw new AgentIndexOnlyError();
+    }
+
     // when minAge is specified, don't waterfall to other engines
     if (meta.options.minAge !== undefined) {
       throw new NoCachedDataError();
@@ -324,7 +336,7 @@ export async function scrapeURLWithIndex(
 
   const checkpoint2 = Date.now();
 
-  const id = data[0].id;
+  const id = selectedRow.id;
 
   const doc = await getIndexFromGCS(
     id + ".json",
@@ -386,7 +398,7 @@ export async function scrapeURLWithIndex(
     contentType: doc.contentType,
 
     cacheInfo: {
-      created_at: new Date(data[0].created_at),
+      created_at: new Date(selectedRow.created_at),
     },
 
     postprocessorsUsed: doc.postprocessorsUsed,

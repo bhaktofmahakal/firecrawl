@@ -193,7 +193,10 @@ export async function brandingTransformer(
       ogImage: brandingProfile.images?.ogImage ?? undefined,
       heuristicLogoPick,
       teamId: meta.internalOptions.teamId,
+      scrapeId: meta.id,
+      zeroDataRetention: meta.internalOptions.zeroDataRetention,
       teamFlags: meta.internalOptions.teamFlags,
+      logger: meta.logger,
     });
 
     // Track LLM success/failure status (will be updated after all processing)

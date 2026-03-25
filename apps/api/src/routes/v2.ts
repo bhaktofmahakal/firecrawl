@@ -55,6 +55,10 @@ import {
   agentSignupConfirmController,
   agentSignupBlockController,
 } from "../controllers/v2/agent-signup-confirm";
+import {
+  scrapeInteractController,
+  scrapeStopInteractiveBrowserController,
+} from "../controllers/v2/scrape-browser";
 
 expressWs(express());
 
@@ -201,6 +205,20 @@ v2Router.get(
   authMiddleware(RateLimiterMode.CrawlStatus),
   validateJobIdParam,
   wrap(scrapeStatusController),
+);
+
+v2Router.post(
+  "/scrape/:jobId/interact",
+  authMiddleware(RateLimiterMode.BrowserExecute),
+  validateJobIdParam,
+  wrap(scrapeInteractController),
+);
+
+v2Router.delete(
+  "/scrape/:jobId/interact",
+  authMiddleware(RateLimiterMode.BrowserExecute),
+  validateJobIdParam,
+  wrap(scrapeStopInteractiveBrowserController),
 );
 
 v2Router.post(
@@ -409,7 +427,7 @@ v2Router.post(
 );
 
 // Agent signup routes (public, no auth required — rate limiting is handled inside the controller)
-v2Router.post("/agent-signup", wrap(agentSignupController));
+// v2Router.post("/agent-signup", wrap(agentSignupController));
 v2Router.post("/agent-signup/confirm", wrap(agentSignupConfirmController));
 v2Router.post("/agent-signup/block", wrap(agentSignupBlockController));
 

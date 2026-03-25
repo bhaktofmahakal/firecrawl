@@ -20,6 +20,7 @@ import { fromV1ScrapeOptions } from "../v2/types";
 import { checkPermissions } from "../../lib/permissions";
 import { crawlGroup } from "../../services/worker/nuq";
 import { logRequest } from "../../services/logging/log_job";
+import { getScrapeZDR } from "../../lib/zdr-helpers";
 
 export async function crawlController(
   req: RequestWithAuth<{}, CrawlResponse, CrawlRequest>,
@@ -37,7 +38,7 @@ export async function crawlController(
   }
 
   const zeroDataRetention =
-    req.acuc?.flags?.forceZDR || req.body.zeroDataRetention;
+    getScrapeZDR(req.acuc?.flags) === "forced" || req.body.zeroDataRetention;
 
   const id = uuidv7();
   const logger = _logger.child({
@@ -125,6 +126,7 @@ export async function crawlController(
       teamId: req.auth.team_id,
       saveScrapeResultToGCS: config.GCS_FIRE_ENGINE_BUCKET_NAME ? true : false,
       zeroDataRetention,
+      agentIndexOnly: (req as any).agentIndexOnly ?? false,
     }, // NOTE: smart wait disabled for crawls to ensure contentful scrape, speed does not matter
     team_id: req.auth.team_id,
     createdAt: Date.now(),
@@ -171,6 +173,7 @@ export async function crawlController(
       internalOptions: sc.internalOptions,
       origin: req.body.origin,
       integration: req.body.integration,
+      billing: { endpoint: "crawl", jobId: id },
       crawl_id: id,
       webhook: req.body.webhook,
       v1: true,

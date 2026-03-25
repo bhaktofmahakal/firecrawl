@@ -275,6 +275,7 @@ class Document(BaseModel):
     images: Optional[List[str]] = None
     screenshot: Optional[str] = None
     actions: Optional[Dict[str, Any]] = None
+    answer: Optional[str] = None
     warning: Optional[str] = None
     change_tracking: Optional[Dict[str, Any]] = None
     branding: Optional[BrandingProfile] = None
@@ -384,6 +385,7 @@ FormatString = Literal[
     "json",
     "attributes",
     "branding",
+    "query",
     # snake_case versions (user-friendly)
     "raw_html",
     "change_tracking",
@@ -442,6 +444,13 @@ class AttributesFormat(Format):
     selectors: List[AttributeSelector]
 
 
+class QueryFormat(Format):
+    """Configuration for query format - ask a question about the page content."""
+
+    type: Literal["query"] = "query"
+    prompt: str
+
+
 FormatOption = Union[
     Dict[str, Any],
     FormatString,
@@ -449,6 +458,7 @@ FormatOption = Union[
     ChangeTrackingFormat,
     ScreenshotFormat,
     AttributesFormat,
+    QueryFormat,
     Format,
 ]
 
@@ -478,8 +488,14 @@ class ScrapeFormats(BaseModel):
         normalized_formats = []
         for format_item in v:
             if isinstance(format_item, str):
+                if format_item == "query":
+                    raise ValueError("query format must be an object with 'type' and 'prompt' fields")
                 normalized_formats.append(Format(type=format_item))
             elif isinstance(format_item, dict):
+                # Reject query dicts missing prompt early
+                prompt = format_item.get('prompt')
+                if format_item.get('type') == 'query' and (not isinstance(prompt, str) or not prompt.strip()):
+                    raise ValueError("query format requires a non-empty 'prompt' string")
                 # Preserve dicts as-is to avoid dropping custom fields like 'schema'
                 normalized_formats.append(format_item)
             elif isinstance(format_item, Format):
@@ -527,6 +543,7 @@ class ScrapeOptions(BaseModel):
     max_age: Optional[int] = None
     min_age: Optional[int] = None
     store_in_cache: Optional[bool] = None
+    profile: Optional[Dict[str, Any]] = None
     integration: Optional[str] = None
 
     @field_validator("formats")
@@ -829,6 +846,9 @@ class BrowserExecuteResponse(BaseModel):
     """Response from executing code in a browser session."""
 
     success: bool
+    live_view_url: Optional[str] = None
+    interactive_live_view_url: Optional[str] = None
+    output: Optional[str] = None
     stdout: Optional[str] = None
     result: Optional[str] = None
     stderr: Optional[str] = None

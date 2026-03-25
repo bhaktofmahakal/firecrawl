@@ -24,6 +24,7 @@ import { fromV0Combo } from "../v2/types";
 import { ScrapeJobTimeoutError } from "../../lib/error";
 import { scrapeQueue } from "../../services/worker/nuq";
 import { defaultOrigin } from "../../lib/default-values";
+import { getSearchZDR } from "../../lib/zdr-helpers";
 
 async function searchHelper(
   jobId: string,
@@ -80,14 +81,19 @@ async function searchHelper(
   );
 
   if (justSearch) {
-    billTeam(team_id, subscription_id, res.length, api_key_id, logger).catch(
-      error => {
-        logger.error(
-          `Failed to bill team ${team_id} for ${res.length} credits: ${error}`,
-        );
-        // Optionally, you could notify an admin or add to a retry queue here
-      },
-    );
+    billTeam(
+      team_id,
+      subscription_id,
+      res.length,
+      api_key_id,
+      { endpoint: "search", jobId },
+      logger,
+    ).catch(error => {
+      logger.error(
+        `Failed to bill team ${team_id} for ${res.length} credits: ${error}`,
+      );
+      // Optionally, you could notify an admin or add to a retry queue here
+    });
     return { success: true, data: res, returnCode: 200 };
   }
 
@@ -101,6 +107,7 @@ async function searchHelper(
   }
 
   const jobPriority = await getJobPriority({ team_id, basePriority: 20 });
+  const billing = { endpoint: "search" as const, jobId };
 
   // filter out social media links
 
@@ -120,6 +127,7 @@ async function searchHelper(
         apiKeyId: api_key_id,
         origin: req.body.origin ?? defaultOrigin,
         requestId: jobId,
+        billing,
       } satisfies ScrapeJobSingleUrls,
     };
   });
@@ -169,7 +177,7 @@ export async function searchController(req: Request, res: Response) {
     }
     const { team_id, chunk } = auth;
 
-    if (chunk?.flags?.forceZDR) {
+    if (getSearchZDR(chunk?.flags) === "forced") {
       return res.status(400).json({
         error:
           "Your team has zero data retention enabled. This is not supported on the v0 API. Please update your code to use the v1 API.",

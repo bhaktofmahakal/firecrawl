@@ -51,13 +51,19 @@ export interface AttributesFormat extends Format {
   }>;
 }
 
+export interface QueryFormat {
+  type: 'query';
+  prompt: string;
+}
+
 export type FormatOption =
   | FormatString
   | Format
   | JsonFormat
   | ChangeTrackingFormat
   | ScreenshotFormat
-  | AttributesFormat;
+  | AttributesFormat
+  | QueryFormat;
 
 export interface LocationConfig {
   country?: string;
@@ -157,6 +163,10 @@ export interface ScrapeOptions {
   maxAge?: number;
   minAge?: number;
   storeInCache?: boolean;
+  profile?: {
+    name: string;
+    saveChanges?: boolean;
+  };
   integration?: string;
   origin?: string;
 }
@@ -388,6 +398,7 @@ export interface Document {
     values: string[];
   }>;
   actions?: Record<string, unknown>;
+  answer?: string;
   warning?: string;
   changeTracking?: Record<string, unknown>;
   branding?: BrandingProfile;
@@ -704,6 +715,9 @@ export interface BrowserCreateResponse {
 
 export interface BrowserExecuteResponse {
   success: boolean;
+  liveViewUrl?: string;
+  interactiveLiveViewUrl?: string;
+  output?: string;
   stdout?: string;
   result?: string;
   stderr?: string;
@@ -718,6 +732,17 @@ export interface BrowserDeleteResponse {
   creditsBilled?: number;
   error?: string;
 }
+
+export interface ScrapeExecuteRequest {
+  code?: string;
+  prompt?: string;
+  language?: "python" | "node" | "bash";
+  timeout?: number;
+  origin?: string;
+}
+
+export type ScrapeExecuteResponse = BrowserExecuteResponse;
+export type ScrapeBrowserDeleteResponse = BrowserDeleteResponse;
 
 export interface BrowserSession {
   id: string;

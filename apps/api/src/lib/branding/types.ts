@@ -1,3 +1,4 @@
+import { Logger } from "winston";
 import { BrandingProfile } from "../../types/branding";
 
 export interface ButtonSnapshot {
@@ -91,7 +92,10 @@ export interface BrandingLLMInput {
     reasoning: string;
   };
   teamId?: string;
+  scrapeId?: string;
+  zeroDataRetention?: boolean;
   teamFlags?: { debugBranding?: boolean } | null;
+  logger: Logger;
 }
 
 /**

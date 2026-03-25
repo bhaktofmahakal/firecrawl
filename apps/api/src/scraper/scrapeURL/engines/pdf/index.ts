@@ -23,6 +23,11 @@ import type { PDFMode } from "../../../../controllers/v2/types";
 import { processPdf, detectPdf } from "@mendable/firecrawl-rs";
 import { MAX_FILE_SIZE, MILLISECONDS_PER_PAGE } from "./types";
 import type { PDFProcessorResult } from "./types";
+import {
+  emitNativeLogs,
+  extractAndEmitNativeLogs,
+} from "../../../../lib/native-logging";
+import { withSpan, setSpanAttributes } from "../../../../lib/otel-tracer";
 import { scrapePDFWithRunPodMU } from "./runpodMU";
 import { scrapePDFWithParsePDF } from "./pdfParse";
 import { captureExceptionWithZdrCheck } from "../../../../services/sentry";
@@ -58,6 +63,7 @@ export async function scrapePDF(meta: Meta): Promise<EngineScrapeResult> {
         html: content,
         markdown: content,
 
+        contentType: "application/pdf",
         proxyUsed: meta.pdfPrefetch.proxyUsed,
       };
     } else {
@@ -92,6 +98,7 @@ export async function scrapePDF(meta: Meta): Promise<EngineScrapeResult> {
         html: content,
         markdown: content,
 
+        contentType: "application/pdf",
         proxyUsed: "basic",
       };
     }
@@ -146,6 +153,7 @@ export async function scrapePDF(meta: Meta): Promise<EngineScrapeResult> {
     let shadowConfidence: number | undefined;
     let shadowIsComplex: boolean | undefined;
     let shadowIneligibleReason: string | null | undefined;
+    let shadowPagesNeedingOcr: number[] | undefined;
 
     const rustEnabled = !!config.PDF_RUST_EXTRACT_ENABLE;
     const logger = meta.logger.child({ method: "scrapePDF/processPdf" });
@@ -155,8 +163,21 @@ export async function scrapePDF(meta: Meta): Promise<EngineScrapeResult> {
       // When PDF_RUST_EXTRACT_ENABLE is off this is the only path taken,
       // matching current prod behaviour (detectPdf → MinerU → pdfParse).
       try {
+        const nativeCtx = {
+          scrapeId: meta.id,
+          url: meta.rewrittenUrl ?? meta.url,
+        };
         const startedAt = Date.now();
-        const detection = detectPdf(tempFilePath);
+        const detection = await withSpan("native.pdf.detect", async span => {
+          const result = detectPdf(tempFilePath, nativeCtx);
+          setSpanAttributes(span, {
+            "native.module": "pdf",
+            "native.pdf_type": result.pdfType,
+            "native.page_count": result.pageCount,
+          });
+          emitNativeLogs(result.logs, meta.logger, "pdf.detect");
+          return result;
+        });
         const durationMs = Date.now() - startedAt;
 
         logger.info("detectPdf completed", {
@@ -173,6 +194,7 @@ export async function scrapePDF(meta: Meta): Promise<EngineScrapeResult> {
           : detection.pageCount;
         metadataTitle = detection.title ?? undefined;
       } catch (error) {
+        extractAndEmitNativeLogs(error, meta.logger, "pdf.detect");
         logger.warn("detectPdf failed", {
           error,
           url: meta.rewrittenUrl ?? meta.url,
@@ -189,8 +211,27 @@ export async function scrapePDF(meta: Meta): Promise<EngineScrapeResult> {
     } else {
       // Rust extraction enabled (fast / auto modes).
       try {
+        const nativeCtx = {
+          scrapeId: meta.id,
+          url: meta.rewrittenUrl ?? meta.url,
+        };
         const startedAt = Date.now();
-        const pdfResult = processPdf(tempFilePath);
+        const pdfResult = await withSpan("native.pdf.process", async span => {
+          const result = processPdf(
+            tempFilePath,
+            maxPages ?? undefined,
+            nativeCtx,
+          );
+          setSpanAttributes(span, {
+            "native.module": "pdf",
+            "native.pdf_type": result.pdfType,
+            "native.page_count": result.pageCount,
+            "native.confidence": result.confidence,
+            "native.is_complex": result.isComplex,
+          });
+          emitNativeLogs(result.logs, meta.logger, "pdf.process");
+          return result;
+        });
         const durationMs = Date.now() - startedAt;
 
         logger.info("processPdf completed", {
@@ -223,14 +264,18 @@ export async function scrapePDF(meta: Meta): Promise<EngineScrapeResult> {
           mode,
         });
 
-        // Only shadow-compare when Rust had a real chance at extraction.
-        // Scanned/ImageBased/Mixed PDFs are expected to produce near-zero
-        // Rust output — comparing them just adds noise to the metrics.
+        // Shadow-compare when Rust produced meaningful output but wasn't
+        // eligible for direct serving. Includes:
+        // - Ineligible TextBased (complex layouts, lower confidence)
+        // - Mixed PDFs with substantial extracted text (invisible OCR layers)
+        const charsPerPage =
+          (pdfResult.markdown?.length ?? 0) / Math.max(pdfResult.pageCount, 1);
         const shadowEligible =
           !eligible &&
           pdfResult.markdown &&
           config.PDF_SHADOW_COMPARISON_ENABLE &&
-          pdfResult.pdfType === "TextBased";
+          (pdfResult.pdfType === "TextBased" ||
+            (pdfResult.pdfType === "Mixed" && charsPerPage >= 200));
 
         rustMarkdownForShadow = shadowEligible ? pdfResult.markdown : undefined;
         if (shadowEligible) {
@@ -238,6 +283,7 @@ export async function scrapePDF(meta: Meta): Promise<EngineScrapeResult> {
           shadowConfidence = pdfResult.confidence;
           shadowIsComplex = pdfResult.isComplex;
           shadowIneligibleReason = ineligibleReason;
+          shadowPagesNeedingOcr = pdfResult.pagesNeedingOcr;
         }
 
         // In fast mode, if the PDF requires OCR, fail immediately with a
@@ -258,6 +304,7 @@ export async function scrapePDF(meta: Meta): Promise<EngineScrapeResult> {
         if (error instanceof PDFOCRRequiredError) {
           throw error;
         }
+        extractAndEmitNativeLogs(error, meta.logger, "pdf.process");
         logger.warn("processPdf failed, falling back to MU/PdfParse", {
           error,
           url: meta.rewrittenUrl ?? meta.url,
@@ -346,6 +393,14 @@ export async function scrapePDF(meta: Meta): Promise<EngineScrapeResult> {
                   confidence: shadowConfidence,
                   isComplex: shadowIsComplex,
                   ineligibleReason: shadowIneligibleReason,
+                  ocrPageCount: shadowPagesNeedingOcr?.length ?? 0,
+                  ocrPageRatio:
+                    effectivePageCount > 0
+                      ? Math.round(
+                          ((shadowPagesNeedingOcr?.length ?? 0) * 100) /
+                            effectivePageCount,
+                        ) / 100
+                      : 0,
                   ...metrics.overall,
                 });
               } catch (error) {
@@ -409,6 +464,7 @@ export async function scrapePDF(meta: Meta): Promise<EngineScrapeResult> {
         title: metadataTitle,
       },
 
+      contentType: "application/pdf",
       proxyUsed: "basic",
     };
   } finally {

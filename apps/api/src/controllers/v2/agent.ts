@@ -10,6 +10,7 @@ import { logger as _logger } from "../../lib/logger";
 import { logRequest } from "../../services/logging/log_job";
 import { config } from "../../config";
 import { supabase_service } from "../../services/supabase";
+import { getScrapeZDR } from "../../lib/zdr-helpers";
 
 export async function agentController(
   req: RequestWithAuth<{}, AgentResponse, AgentRequest>,
@@ -24,13 +25,13 @@ export async function agentController(
     team_id: req.auth.team_id,
     module: "api/v2",
     method: "agentController",
-    zeroDataRetention: req.acuc?.flags?.forceZDR,
+    zeroDataRetention: getScrapeZDR(req.acuc?.flags) === "forced",
   });
 
   const originalRequest = { ...req.body };
   req.body = agentRequestSchema.parse(req.body);
 
-  if (req.acuc?.flags?.forceZDR) {
+  if (getScrapeZDR(req.acuc?.flags) === "forced") {
     return res.status(400).json({
       success: false,
       error:
@@ -42,16 +43,20 @@ export async function agentController(
     request: req.body,
     originalRequest,
     subId: req.acuc?.sub_id,
-    zeroDataRetention: req.acuc?.flags?.forceZDR,
+    zeroDataRetention: getScrapeZDR(req.acuc?.flags) === "forced",
   });
 
   if (!config.EXTRACT_V3_BETA_URL) {
     throw new Error("Agent beta is not enabled.");
   }
 
+  // If maxCredits > 2500, skip free request consumption — this is always a paid request
+  const highCreditRequest =
+    req.body.maxCredits !== undefined && req.body.maxCredits > 2500;
+
   let freeRequest: any;
 
-  if (config.USE_DB_AUTHENTICATION) {
+  if (config.USE_DB_AUTHENTICATION && !highCreditRequest) {
     const { data, error: freeRequestError } = await supabase_service.rpc(
       "agent_consume_free_request_if_left",
       {
@@ -66,9 +71,11 @@ export async function agentController(
     freeRequest = data;
   }
 
-  const isFreeRequest = config.USE_DB_AUTHENTICATION
-    ? !!freeRequest?.[0]?.consumed
-    : true;
+  const isFreeRequest = highCreditRequest
+    ? false
+    : config.USE_DB_AUTHENTICATION
+      ? !!freeRequest?.[0]?.consumed
+      : true;
 
   await logRequest({
     id: agentId,

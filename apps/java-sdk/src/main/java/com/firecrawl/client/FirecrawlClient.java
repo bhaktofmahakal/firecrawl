@@ -4,6 +4,8 @@ import com.firecrawl.errors.FirecrawlException;
 import com.firecrawl.errors.JobTimeoutException;
 import com.firecrawl.models.*;
 
+import okhttp3.OkHttpClient;
+
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -99,6 +101,98 @@ public class FirecrawlClient {
             mergeOptions(body, options);
         }
         return extractData(http.post("/v2/scrape", body, Map.class), Document.class);
+    }
+
+    /**
+     * Interacts with the scrape-bound browser session for a scrape job.
+     *
+     * @param jobId the scrape job ID
+     * @param code  the code to execute
+     * @return the execution result including stdout, stderr, and exit code
+     */
+    public BrowserExecuteResponse interact(String jobId, String code) {
+        return interact(jobId, code, "node", null, null);
+    }
+
+    /**
+     * Interacts with the scrape-bound browser session for a scrape job.
+     *
+     * @param jobId    the scrape job ID
+     * @param code     the code to execute
+     * @param language the language: "python", "node", or "bash" (default: "node")
+     * @param timeout  execution timeout in seconds (1-300), or null for default (30)
+     * @return the execution result including stdout, stderr, and exit code
+     */
+    public BrowserExecuteResponse interact(String jobId, String code,
+                                           String language, Integer timeout) {
+        return interact(jobId, code, language, timeout, null);
+    }
+
+    /**
+     * Interacts with the scrape-bound browser session for a scrape job.
+     *
+     * @param jobId    the scrape job ID
+     * @param code     the code to execute
+     * @param language the language: "python", "node", or "bash" (default: "node")
+     * @param timeout  execution timeout in seconds (1-300), or null for default (30)
+     * @param origin   optional origin tag for request attribution
+     * @return the execution result including stdout, stderr, and exit code
+     */
+    public BrowserExecuteResponse interact(String jobId, String code,
+                                           String language, Integer timeout, String origin) {
+        Objects.requireNonNull(jobId, "Job ID is required");
+        Objects.requireNonNull(code, "Code is required");
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("code", code);
+        body.put("language", language != null ? language : "node");
+        if (timeout != null) body.put("timeout", timeout);
+        if (origin != null) body.put("origin", origin);
+        return http.post("/v2/scrape/" + jobId + "/interact", body, BrowserExecuteResponse.class);
+    }
+
+    /**
+     * Stops the interactive browser session for a scrape job.
+     *
+     * @param jobId the scrape job ID
+     * @return the stop response with session duration and billing info
+     */
+    public BrowserDeleteResponse stopInteractiveBrowser(String jobId) {
+        Objects.requireNonNull(jobId, "Job ID is required");
+        return http.delete("/v2/scrape/" + jobId + "/interact", BrowserDeleteResponse.class);
+    }
+
+    /**
+     * @deprecated Use {@link #interact(String, String)}.
+     */
+    @Deprecated
+    public BrowserExecuteResponse scrapeExecute(String jobId, String code) {
+        return interact(jobId, code);
+    }
+
+    /**
+     * @deprecated Use {@link #interact(String, String, String, Integer)}.
+     */
+    @Deprecated
+    public BrowserExecuteResponse scrapeExecute(String jobId, String code,
+                                                String language, Integer timeout) {
+        return interact(jobId, code, language, timeout);
+    }
+
+    /**
+     * @deprecated Use {@link #interact(String, String, String, Integer, String)}.
+     */
+    @Deprecated
+    public BrowserExecuteResponse scrapeExecute(String jobId, String code,
+                                                String language, Integer timeout, String origin) {
+        return interact(jobId, code, language, timeout, origin);
+    }
+
+    /**
+     * @deprecated Use {@link #stopInteractiveBrowser(String)}.
+     */
+    @Deprecated
+    public BrowserDeleteResponse deleteScrapeBrowser(String jobId) {
+        return stopInteractiveBrowser(jobId);
     }
 
     // ================================================================
@@ -532,6 +626,96 @@ public class FirecrawlClient {
     }
 
     /**
+     * Asynchronously executes code in a scrape-bound browser session.
+     *
+     * @param jobId the scrape job ID
+     * @param code  the code to execute
+     * @return a CompletableFuture that resolves to the BrowserExecuteResponse
+     */
+    public CompletableFuture<BrowserExecuteResponse> interactAsync(String jobId, String code) {
+        return CompletableFuture.supplyAsync(() -> interact(jobId, code), asyncExecutor);
+    }
+
+    /**
+     * Asynchronously executes code in a scrape-bound browser session.
+     *
+     * @param jobId    the scrape job ID
+     * @param code     the code to execute
+     * @param language the language: "python", "node", or "bash"
+     * @param timeout  execution timeout in seconds, or null for default
+     * @return a CompletableFuture that resolves to the BrowserExecuteResponse
+     */
+    public CompletableFuture<BrowserExecuteResponse> interactAsync(String jobId, String code,
+                                                                   String language, Integer timeout) {
+        return CompletableFuture.supplyAsync(
+                () -> interact(jobId, code, language, timeout),
+                asyncExecutor
+        );
+    }
+
+    /**
+     * Asynchronously executes code in a scrape-bound browser session.
+     *
+     * @param jobId    the scrape job ID
+     * @param code     the code to execute
+     * @param language the language: "python", "node", or "bash"
+     * @param timeout  execution timeout in seconds, or null for default
+     * @param origin   optional origin tag for request attribution
+     * @return a CompletableFuture that resolves to the BrowserExecuteResponse
+     */
+    public CompletableFuture<BrowserExecuteResponse> interactAsync(String jobId, String code,
+                                                                   String language, Integer timeout, String origin) {
+        return CompletableFuture.supplyAsync(
+                () -> interact(jobId, code, language, timeout, origin),
+                asyncExecutor
+        );
+    }
+
+    /**
+     * Asynchronously deletes a scrape-bound browser session.
+     *
+     * @param jobId the scrape job ID
+     * @return a CompletableFuture that resolves to the BrowserDeleteResponse
+     */
+    public CompletableFuture<BrowserDeleteResponse> stopInteractiveBrowserAsync(String jobId) {
+        return CompletableFuture.supplyAsync(() -> stopInteractiveBrowser(jobId), asyncExecutor);
+    }
+
+    /**
+     * @deprecated Use {@link #interactAsync(String, String)}.
+     */
+    @Deprecated
+    public CompletableFuture<BrowserExecuteResponse> scrapeExecuteAsync(String jobId, String code) {
+        return interactAsync(jobId, code);
+    }
+
+    /**
+     * @deprecated Use {@link #interactAsync(String, String, String, Integer)}.
+     */
+    @Deprecated
+    public CompletableFuture<BrowserExecuteResponse> scrapeExecuteAsync(String jobId, String code,
+                                                                        String language, Integer timeout) {
+        return interactAsync(jobId, code, language, timeout);
+    }
+
+    /**
+     * @deprecated Use {@link #interactAsync(String, String, String, Integer, String)}.
+     */
+    @Deprecated
+    public CompletableFuture<BrowserExecuteResponse> scrapeExecuteAsync(String jobId, String code,
+                                                                        String language, Integer timeout, String origin) {
+        return interactAsync(jobId, code, language, timeout, origin);
+    }
+
+    /**
+     * @deprecated Use {@link #stopInteractiveBrowserAsync(String)}.
+     */
+    @Deprecated
+    public CompletableFuture<BrowserDeleteResponse> deleteScrapeBrowserAsync(String jobId) {
+        return stopInteractiveBrowserAsync(jobId);
+    }
+
+    /**
      * Asynchronously crawls a website and waits for completion.
      *
      * @param url     the URL to crawl
@@ -757,6 +941,7 @@ public class FirecrawlClient {
         private int maxRetries = DEFAULT_MAX_RETRIES;
         private double backoffFactor = DEFAULT_BACKOFF_FACTOR;
         private Executor asyncExecutor;
+        private OkHttpClient httpClient;
 
         private Builder() {}
 
@@ -810,6 +995,35 @@ public class FirecrawlClient {
             return this;
         }
 
+        /**
+         * Sets a pre-configured OkHttpClient instance.
+         *
+         * <p>When provided, this client is used as-is for all HTTP requests, giving
+         * full control over connection pooling, interceptors, SSL configuration,
+         * proxy settings, timeouts, and any other OkHttp feature. The
+         * {@link #timeoutMs(long)} setting is ignored when a custom client is supplied.
+         *
+         * <p>Example:
+         * <pre>{@code
+         * OkHttpClient custom = new OkHttpClient.Builder()
+         *     .proxy(new Proxy(Proxy.Type.HTTP, new InetSocketAddress("proxy.example.com", 8080)))
+         *     .addInterceptor(myLoggingInterceptor)
+         *     .connectTimeout(10, TimeUnit.SECONDS)
+         *     .build();
+         *
+         * FirecrawlClient client = FirecrawlClient.builder()
+         *     .apiKey("fc-your-api-key")
+         *     .httpClient(custom)
+         *     .build();
+         * }</pre>
+         *
+         * @param httpClient the OkHttpClient instance to use
+         */
+        public Builder httpClient(OkHttpClient httpClient) {
+            this.httpClient = httpClient;
+            return this;
+        }
+
         public FirecrawlClient build() {
             String resolvedKey = apiKey;
             if (resolvedKey == null || resolvedKey.isBlank()) {
@@ -834,7 +1048,7 @@ public class FirecrawlClient {
 
             Executor executor = asyncExecutor != null ? asyncExecutor : ForkJoinPool.commonPool();
             FirecrawlHttpClient http = new FirecrawlHttpClient(
-                    resolvedKey, resolvedUrl, timeoutMs, maxRetries, backoffFactor);
+                    resolvedKey, resolvedUrl, timeoutMs, maxRetries, backoffFactor, httpClient);
             return new FirecrawlClient(http, executor);
         }
     }

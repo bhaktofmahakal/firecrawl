@@ -22,6 +22,8 @@ import { getJobPriority } from "../../lib/job-priority";
 import { logRequest } from "../../services/logging/log_job";
 import { getErrorContactMessage } from "../../lib/deployment";
 import { captureExceptionWithZdrCheck } from "../../services/sentry";
+import type { BillingMetadata } from "../../services/billing/types";
+import { getScrapeZDR } from "../../lib/zdr-helpers";
 
 const AGENT_INTEROP_CONCURRENCY_BOOST = 3;
 
@@ -82,7 +84,10 @@ export async function scrapeController(
       }
 
       const zeroDataRetention =
-        req.acuc?.flags?.forceZDR || (req.body.zeroDataRetention ?? false);
+        getScrapeZDR(req.acuc?.flags) === "forced" || (req.body.zeroDataRetention ?? false);
+      const billing: BillingMetadata = req.body.__agentInterop
+        ? { endpoint: "agent" as const, jobId }
+        : { endpoint: "scrape" as const, jobId };
 
       if (
         req.body.__agentInterop &&
@@ -242,10 +247,12 @@ export async function scrapeController(
                       bypassBilling: isDirectToBullMQ || !shouldBill,
                       zeroDataRetention,
                       teamFlags: req.acuc?.flags ?? null,
+                      agentIndexOnly: (req as any).agentIndexOnly ?? false,
                     },
                     skipNuq: true,
                     origin,
                     integration: req.body.integration,
+                    billing,
                     startTime: controllerStartTime,
                     zeroDataRetention,
                     apiKeyId: req.acuc?.api_key_id ?? null,
@@ -304,6 +311,19 @@ export async function scrapeController(
               success: false,
               code: e.code,
               error: e.message,
+            });
+          }
+
+          if (e.code === "AGENT_INDEX_ONLY") {
+            setSpanAttributes(span, {
+              "scrape.status_code": 403,
+            });
+            return res.status(403).json({
+              success: false,
+              code: e.code,
+              error: e.message,
+              sponsor_status: "pending",
+              login_url: "https://firecrawl.dev/signin",
             });
           }
 
@@ -388,7 +408,8 @@ export async function scrapeController(
       let usedLlm =
         !!hasFormatOfType(req.body.formats, "json") ||
         !!hasFormatOfType(req.body.formats, "summary") ||
-        !!hasFormatOfType(req.body.formats, "branding");
+        !!hasFormatOfType(req.body.formats, "branding") ||
+        !!hasFormatOfType(req.body.formats, "query");
 
       if (!usedLlm) {
         const ct = hasFormatOfType(req.body.formats, "changeTracking");
